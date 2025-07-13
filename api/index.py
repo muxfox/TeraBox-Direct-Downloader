@@ -73,67 +73,86 @@ def find_between(string, start, end):
   return string[start_index:end_index]
 
 
-async def fetch_download_link_async(url):
-  try:
-      async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
-          async with session.get(url) as response1:
-              response1.raise_for_status()
-              response_data = await response1.text()
-              js_token = find_between(response_data, 'fn%28%22', '%22%29')
-              #print(js_token)
-              log_id = find_between(response_data, 'dp-logid=', '&')
-             # print(log_id)
+async def fetch_download_link_async2(url):
+    async def fetch_files(session, base_params, dir_path=None):
+        params = base_params.copy()
+        if dir_path:
+            params.update({
+                'dir': dir_path,
+                'order': 'asc',
+                'by': 'name',
+            })
+            params.pop('desc', None)
+            params.pop('root', None)
 
-              if not js_token or not log_id:
-                  return None
+        async with session.get('https://www.1024tera.com/share/list', params=params) as response:
+            data = await response.json()
+            if 'list' not in data:
+                return []
 
-              request_url = str(response1.url)
-              surl = request_url.split('surl=')[1]
-              params = {
-                  'app_id': '250528',
-                  'web': '1',
-                  'channel': 'dubox',
-                  'clienttype': '0',
-                  'jsToken': js_token,
-                  'dplogid': log_id,
-                  'page': '1',
-                  'num': '20',
-                  'order': 'time',
-                  'desc': '1',
-                  'site_referer': request_url,
-                  'shorturl': surl,
-                  'root': '1'
-              }
+            files = data['list']
+            all_file_data = []
 
-              async with session.get('https://www.1024tera.com/share/list', params=params) as response2:
-                  response_data2 = await response2.json()
-                #   print(response_data2)
-                  #print("res2", response_data2)
-                  if 'list' not in response_data2:
-                      return None
+            for file in files:
+                if file['isdir'] == "1":
+                    # Recursively fetch files in this directory
+                    sub_files = await fetch_files(session, base_params, dir_path=file['path'])
+                    all_file_data.extend(sub_files)
+                else:
+                    async with session.head(file["dlink"], headers=headers) as direct_link_response:
+                        direct_download_url = direct_link_response.headers.get("location")
 
-                  if response_data2['list'][0]['isdir'] == "1":
-                      params.update({
-                          'dir': response_data2['list'][0]['path'],
-                          'order': 'asc',
-                          'by': 'name',
-                          'dplogid': log_id
-                      })
-                      params.pop('desc')
-                      params.pop('root')
+                    file_info = {
+                        "file_name": file.get("server_filename"),
+                        "link": file.get("dlink"),
+                        "direct_link": direct_download_url,
+                        "thumb": file.get("thumbs", {}).get("url3", "https://default_thumbnail.png"),
+                        "size": await get_formatted_size_async(file.get("size", 0)),
+                        "sizebytes": file.get("size", 0),
+                    }
+                    all_file_data.append(file_info)
 
-                      async with session.get('https://www.1024tera.com/share/list', params=params) as response3:
-                          response_data3 = await response3.json()
-                        #   print(response_data3)
-                          #print("res3", response_data3)
-                          if 'list' not in response_data3:
-                              return None
-                          return response_data3['list']
-                  #print(response_data2['list'])
-                  return response_data2['list']
-  except aiohttp.ClientResponseError as e:
-      print(f"Error fetching download link: {e}")
-      return None
+            return all_file_data
+
+    try:
+        async with aiohttp.ClientSession(cookies=cookies, headers=headers) as session:
+            async with session.get(url) as response1:
+                response1.raise_for_status()
+                response_data = await response1.text()
+
+                js_token = find_between(response_data, 'fn%28%22', '%22%29')
+                log_id = find_between(response_data, 'dp-logid=', '&')
+
+                if not js_token or not log_id:
+                    return None
+
+                request_url = str(response1.url)
+                surl = request_url.split('surl=')[1]
+
+                base_params = {
+                    'app_id': '250528',
+                    'web': '1',
+                    'channel': 'dubox',
+                    'clienttype': '0',
+                    'jsToken': js_token,
+                    'dplogid': log_id,
+                    'page': '1',
+                    'num': '20',
+                    'order': 'time',
+                    'desc': '1',
+                    'site_referer': request_url,
+                    'shorturl': surl,
+                    'root': '1'
+                }
+
+                # Start recursive fetching from root
+                all_files = await fetch_files(session, base_params)
+                return all_files
+
+    except aiohttp.ClientResponseError as e:
+        print(f"Error fetching download link: {e}")
+        return None
+
 
 
 def extract_thumbnail_dimensions(url: str) -> str:
