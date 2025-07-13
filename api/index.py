@@ -73,7 +73,7 @@ def find_between(string, start, end):
   return string[start_index:end_index]
 
 
-async def fetch_download_link_async2(url):
+async def fetch_download_link_async(url):
     async def fetch_files(session, base_params, dir_path=None):
         params = base_params.copy()
         if dir_path:
